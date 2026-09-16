@@ -1,0 +1,13 @@
+# PlatformIO
+PlatformIO/.pio/
+PlatformIO/.vscode/
+.pioenvs/
+.piolibdeps/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.claude/

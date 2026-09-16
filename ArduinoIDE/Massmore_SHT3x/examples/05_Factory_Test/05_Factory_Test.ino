@@ -1,4 +1,3 @@
-#include <Arduino.h>
 /*
   05_Factory_Test - Outgoing QA/QC สำหรับบอร์ด Massmore SHT3X (SKU-1022)
 

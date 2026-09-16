@@ -1,70 +1,52 @@
 #######################################
-# Syntax Coloring Map สำหรับ Massmore_SHT3x
+# Syntax Coloring Map - Massmore_SHT3x
 #######################################
 
 #######################################
 # Datatypes (KEYWORD1)
 #######################################
 
-MassmoreSHT3x	KEYWORD1
-massmore_sht3x_variant_t	KEYWORD1
-massmore_sht3x_repeatability_t	KEYWORD1
-massmore_sht3x_rate_t	KEYWORD1
-massmore_sht3x_mode_t	KEYWORD1
-massmore_sht3x_error_t	KEYWORD1
-massmore_sht3x_genuine_t	KEYWORD1
-massmore_sht3x_status_bits_t	KEYWORD1
-massmore_sht3x_reading_t	KEYWORD1
-massmore_sht3x_alert_limits_t	KEYWORD1
-massmore_sht3x_callback_t	KEYWORD1
+Massmore_SHT3x	KEYWORD1
+ErrorCode	KEYWORD1
+Repeatability	KEYWORD1
+Rate	KEYWORD1
+Mode	KEYWORD1
+FsmState	KEYWORD1
+Genuine	KEYWORD1
+Reading	KEYWORD1
+StatusBits	KEYWORD1
+AlertLimits	KEYWORD1
 
 #######################################
 # Methods and Functions (KEYWORD2)
 #######################################
 
 begin	KEYWORD2
-beginWithExistingBus	KEYWORD2
 isConnected	KEYWORD2
-setResetPin	KEYWORD2
-setAlertPin	KEYWORD2
-setTimeout	KEYWORD2
 setRepeatability	KEYWORD2
 getRepeatability	KEYWORD2
 setClockStretching	KEYWORD2
 getClockStretching	KEYWORD2
+setTimeout	KEYWORD2
 setTemperatureOffset	KEYWORD2
 getTemperatureOffset	KEYWORD2
 setHumidityOffset	KEYWORD2
 getHumidityOffset	KEYWORD2
-setVariant	KEYWORD2
-getVariant	KEYWORD2
-getVariantName	KEYWORD2
-getTemperatureAccuracy	KEYWORD2
-getHumidityAccuracy	KEYWORD2
-measure	KEYWORD2
 readTemperature	KEYWORD2
-readTemperatureF	KEYWORD2
 readHumidity	KEYWORD2
-startMeasurement	KEYWORD2
-isMeasurementReady	KEYWORD2
-readMeasurement	KEYWORD2
+readAll	KEYWORD2
+requestConversion	KEYWORD2
+update	KEYWORD2
+isDataReady	KEYWORD2
+getReadings	KEYWORD2
+getFsmState	KEYWORD2
 startPeriodic	KEYWORD2
 startART	KEYWORD2
 fetchData	KEYWORD2
-update	KEYWORD2
 stopPeriodic	KEYWORD2
 getMode	KEYWORD2
-setCallback	KEYWORD2
-getTemperature	KEYWORD2
-getTemperatureF	KEYWORD2
-getHumidity	KEYWORD2
-getRawTemperature	KEYWORD2
-getRawHumidity	KEYWORD2
-getLastUpdateMs	KEYWORD2
 getLastReading	KEYWORD2
 setHeater	KEYWORD2
-heaterOn	KEYWORD2
-heaterOff	KEYWORD2
 isHeaterOn	KEYWORD2
 readStatus	KEYWORD2
 clearStatus	KEYWORD2
@@ -73,42 +55,33 @@ setAlertLimits	KEYWORD2
 setAlertWindow	KEYWORD2
 getAlertLimits	KEYWORD2
 isAlertPinActive	KEYWORD2
-packAlertLimit	KEYWORD2
-unpackAlertLimit	KEYWORD2
 softReset	KEYWORD2
 generalCallReset	KEYWORD2
 hardReset	KEYWORD2
-readSerialNumber	KEYWORD2
+verifyChipID	KEYWORD2
 getSerialNumber	KEYWORD2
-verifyChip	KEYWORD2
+isGenuine	KEYWORD2
+getGenuineVerdict	KEYWORD2
 getVerifyMask	KEYWORD2
 getVerifyPassCount	KEYWORD2
 getVerifyCheckName	KEYWORD2
 genuineToString	KEYWORD2
-runHeaterSelfTest	KEYWORD2
 dewPoint	KEYWORD2
 absoluteHumidity	KEYWORD2
-heatIndex	KEYWORD2
-saturationVaporPressure	KEYWORD2
 celsiusToFahrenheit	KEYWORD2
-fahrenheitToCelsius	KEYWORD2
-crc8	KEYWORD2
-sendCommand	KEYWORD2
-readBytes	KEYWORD2
-readWord	KEYWORD2
-writeWord	KEYWORD2
-rawToCelsius	KEYWORD2
-rawToFahrenheit	KEYWORD2
-rawToHumidity	KEYWORD2
-celsiusToRaw	KEYWORD2
-humidityToRaw	KEYWORD2
 lastError	KEYWORD2
 lastErrorString	KEYWORD2
 errorToString	KEYWORD2
-clearError	KEYWORD2
 getAddress	KEYWORD2
 getLibraryVersion	KEYWORD2
 scan	KEYWORD2
+sendCommand	KEYWORD2
+readWord	KEYWORD2
+crc8	KEYWORD2
+rawToCelsius	KEYWORD2
+rawToHumidity	KEYWORD2
+celsiusToRaw	KEYWORD2
+humidityToRaw	KEYWORD2
 
 #######################################
 # Constants (LITERAL1)
@@ -117,37 +90,8 @@ scan	KEYWORD2
 MASSMORE_SHT3X_I2C_ADDR_A	LITERAL1
 MASSMORE_SHT3X_I2C_ADDR_B	LITERAL1
 MASSMORE_SHT3X_I2C_ADDR_DEFAULT	LITERAL1
-MASSMORE_SHT3X_VARIANT_AUTO	LITERAL1
-MASSMORE_SHT3X_VARIANT_SHT30	LITERAL1
-MASSMORE_SHT3X_VARIANT_SHT31	LITERAL1
-MASSMORE_SHT3X_VARIANT_SHT35	LITERAL1
-MASSMORE_SHT3X_REPEATABILITY_LOW	LITERAL1
-MASSMORE_SHT3X_REPEATABILITY_MEDIUM	LITERAL1
-MASSMORE_SHT3X_REPEATABILITY_HIGH	LITERAL1
-MASSMORE_SHT3X_RATE_0_5_HZ	LITERAL1
-MASSMORE_SHT3X_RATE_1_HZ	LITERAL1
-MASSMORE_SHT3X_RATE_2_HZ	LITERAL1
-MASSMORE_SHT3X_RATE_4_HZ	LITERAL1
-MASSMORE_SHT3X_RATE_10_HZ	LITERAL1
-MASSMORE_SHT3X_MODE_IDLE	LITERAL1
-MASSMORE_SHT3X_MODE_SINGLE_SHOT	LITERAL1
-MASSMORE_SHT3X_MODE_PERIODIC	LITERAL1
-MASSMORE_SHT3X_MODE_ART	LITERAL1
-MASSMORE_SHT3X_OK	LITERAL1
-MASSMORE_SHT3X_ERR_NOT_BEGUN	LITERAL1
-MASSMORE_SHT3X_ERR_NO_DEVICE	LITERAL1
-MASSMORE_SHT3X_ERR_I2C_WRITE	LITERAL1
-MASSMORE_SHT3X_ERR_I2C_READ	LITERAL1
-MASSMORE_SHT3X_ERR_CRC	LITERAL1
-MASSMORE_SHT3X_ERR_TIMEOUT	LITERAL1
-MASSMORE_SHT3X_ERR_NOT_READY	LITERAL1
-MASSMORE_SHT3X_ERR_WRONG_MODE	LITERAL1
-MASSMORE_SHT3X_ERR_BAD_ARG	LITERAL1
-MASSMORE_SHT3X_ERR_OUT_OF_RANGE	LITERAL1
-MASSMORE_SHT3X_GENUINE_UNKNOWN	LITERAL1
-MASSMORE_SHT3X_GENUINE_PASS	LITERAL1
-MASSMORE_SHT3X_GENUINE_PARTIAL	LITERAL1
-MASSMORE_SHT3X_GENUINE_SUSPECT	LITERAL1
-MASSMORE_SHT3X_GENUINE_NOT_SHT3X	LITERAL1
-MASSMORE_SHT3X_CHK_COUNT	LITERAL1
 MASSMORE_SHT3X_VERSION_STRING	LITERAL1
+MASSMORE_SHT3X_T_MIN_C	LITERAL1
+MASSMORE_SHT3X_T_MAX_C	LITERAL1
+MASSMORE_SHT3X_RH_MIN	LITERAL1
+MASSMORE_SHT3X_RH_MAX	LITERAL1
