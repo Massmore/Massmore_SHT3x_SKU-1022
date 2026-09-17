@@ -3,7 +3,8 @@
 
   ESP32 / ESP32-S3 (Arduino-ESP32 Core 3.x+)
     GPIO Matrix ให้เลือกขา SDA/SCL ได้เกือบทุกขา และมี Hardware I2C 2 ชุด (Wire, Wire1)
-    ตัวอย่างนี้ใช้ Wire1 บนขาที่กำหนดเอง เพื่อแยกเซ็นเซอร์ออกจาก Bus หลัก
+    ตัวอย่างนี้ใช้ Wire1 เพื่อแยกเซ็นเซอร์ออกจาก Bus หลัก โดยยังใช้ขา 21/22 ตามที่ต่ออยู่จริง
+    ต้องการขาอื่นให้แก้ PIN_SDA / PIN_SCL ด้านล่างได้เลย ไม่ต้องแก้ไลบรารี
 
   Arduino Nano (ATmega328P)
     มี Hardware I2C ชุดเดียว ขาตายตัว A4 (SDA) / A5 (SCL) ย้ายไม่ได้
@@ -15,19 +16,17 @@
 #include <Massmore_SHT3x.h>
 #include <Wire.h>
 
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-/* ESP32-S3: เลือกขาที่ว่างจาก USB / PSRAM / Flash */
-#define PIN_SDA 8
-#define PIN_SCL 9
-#define BUS Wire1
-#elif defined(ESP32)
-/* ESP32 Classic: ย้ายไปขา 25 / 26 เพื่อแสดงว่าไม่จำเป็นต้องใช้ 21 / 22 */
-#define PIN_SDA 25
-#define PIN_SCL 26
-#define BUS Wire1
+#if defined(ESP32)
+/* แก้สองบรรทัดนี้เป็นขาใดก็ได้ที่ว่างบนบอร์ดของคุณ */
+#define PIN_SDA 21
+#define PIN_SCL 22
+#define BUS Wire1          /* ใช้ Hardware I2C ชุดที่สอง */
+#define BUS_NAME "Wire1"
+#define I2C_FREQ 400000UL  /* Fast mode - SHT3x รองรับถึง 1 MHz */
 #else
-/* AVR และบอร์ดอื่น: ใช้ Wire บนขาตายตัว */
-#define BUS Wire
+#define BUS Wire           /* AVR: ขาตายตัว A4 / A5 */
+#define BUS_NAME "Wire"
+#define I2C_FREQ 100000UL
 #endif
 
 Massmore_SHT3x sht(BUS);
@@ -39,18 +38,31 @@ void setup() {
   Serial.println(F("Massmore_SHT3x - 02_CustomPins_BusRemap"));
 
 #if defined(ESP32)
-  BUS.begin(PIN_SDA, PIN_SCL, 400000UL); /* Core 3.x signature: begin(sda, scl, frequency) */
-  Serial.print(F("Bus: Wire1  SDA=GPIO"));
+  BUS.begin(PIN_SDA, PIN_SCL, I2C_FREQ); /* Core 3.x signature: begin(sda, scl, frequency) */
+  Serial.print(F("Bus: " BUS_NAME "  SDA=GPIO"));
   Serial.print(PIN_SDA);
   Serial.print(F("  SCL=GPIO"));
-  Serial.println(PIN_SCL);
+  Serial.print(PIN_SCL);
+  Serial.print(F("  freq="));
+  Serial.print(I2C_FREQ / 1000UL);
+  Serial.println(F(" kHz"));
 #else
   BUS.begin();
-  BUS.setClock(100000UL);
-  Serial.println(F("Bus: Wire  SDA=A4  SCL=A5 (fixed hardware pins)"));
+  BUS.setClock(I2C_FREQ);
+  Serial.println(F("Bus: " BUS_NAME "  SDA=A4  SCL=A5 (fixed hardware pins)"));
 #endif
 
-  if (!sht.begin(MASSMORE_SHT3X_I2C_ADDR_A)) {
+  /* สแกนก่อนเพื่อยืนยันว่าเซ็นเซอร์อยู่บน Bus ที่เลือกจริง */
+  uint8_t found[2];
+  uint8_t n = Massmore_SHT3x::scan(BUS, found);
+  Serial.print(F("Devices found: "));
+  Serial.println(n);
+  for (uint8_t i = 0; i < n; i++) {
+    Serial.print(F("  address 0x"));
+    Serial.println(found[i], HEX);
+  }
+
+  if (!sht.begin(n > 0 ? found[0] : MASSMORE_SHT3X_I2C_ADDR_A)) {
     Serial.print(F("begin() failed: "));
     Serial.println(sht.lastErrorString());
     while (true) {
@@ -61,18 +73,17 @@ void setup() {
 }
 
 void loop() {
-  float t = sht.readTemperature();
-  float h = sht.readHumidity();
+  Massmore_SHT3x::Reading r;
 
-  if (isnan(t) || isnan(h)) {
+  if (sht.readAll(r)) {
+    Serial.print(F("Temp: "));
+    Serial.print(r.temperature, 2);
+    Serial.print(F(" C   Humi: "));
+    Serial.print(r.humidity, 2);
+    Serial.println(F(" %RH"));
+  } else {
     Serial.print(F("Read failed: "));
     Serial.println(sht.lastErrorString());
-  } else {
-    Serial.print(F("Temp: "));
-    Serial.print(t, 2);
-    Serial.print(F(" C   Humi: "));
-    Serial.print(h, 2);
-    Serial.println(F(" %RH"));
   }
   delay(1000);
 }

@@ -118,8 +118,15 @@
 #define MASSMORE_SHT3X_STATUS_CMD_FAILED     (1u << 1)  /**< Command ล่าสุดไม่ถูกประมวลผล */
 #define MASSMORE_SHT3X_STATUS_CRC_FAILED     (1u << 0)  /**< Write data checksum ผิด */
 
-/** Reserved bit ที่ Datasheet ระบุว่าต้องอ่านได้ 0 เสมอ: bit 14, 12, 9..5, 3..2 */
-#define MASSMORE_SHT3X_STATUS_RESERVED_MASK 0x53ECu
+/**
+ * Reserved bit ที่ใช้ยืนยันตัวตนของชิป: bit 14, 12, 9..7, 3..2
+ *
+ * Datasheet Table 18 ระบุ reserved ไว้ที่ bit 14, 12, 9..5, 3..2 แต่การวัดบนบอร์ดจริง
+ * (Massmore SHT3X SKU-1022, SHT30) พบว่า **bit 6 และ bit 5 อ่านได้เป็น 1** ขณะอยู่ใน
+ * Periodic Mode (status = 0x8C60) จึงตัดสอง bit นี้ออกจากการตรวจ ไม่เช่นนั้น
+ * verifyChipID() จะคืน WRONG_ID ทั้งที่ชิปทำงานปกติ
+ */
+#define MASSMORE_SHT3X_STATUS_RESERVED_MASK 0x538Cu
 
 /* ------------------------------------------------------------------------- */
 /* CRC-8 (Datasheet Table 20 "Checksum properties")                          */

@@ -129,20 +129,25 @@ public:
     float lowSetTemperature;    float lowSetHumidity;
   };
 
-  /** Bit ของแต่ละข้อใน Authenticity heuristic (ดู getVerifyMask()) */
+  /**
+   * Bit ของแต่ละข้อใน Authenticity heuristic (ดู getVerifyMask())
+   *
+   * ทุกข้อเลือกมาแล้วว่า **ปลอดภัยกับ I2C Bus** คือไม่มีข้อไหนจงใจให้ชิป NACK
+   * เพราะการทดสอบบนฮาร์ดแวร์พบว่า NACK หนึ่งครั้งทำให้ i2c driver ของ
+   * Arduino-ESP32 Core 3.x ค้างถาวรจนกว่าจะเรียก recoverBus()
+   */
   enum VerifyCheck : uint16_t {
     CHK_ACK          = 1u << 0, /**< ตอบ ACK ที่ address */
     CHK_STATUS_CRC   = 1u << 1, /**< อ่าน Status Register ได้ CRC ถูก */
     CHK_STATUS_RSVD  = 1u << 2, /**< Reserved bit ของ Status เป็น 0 */
-    CHK_RESET_FLAG   = 1u << 3, /**< Reset-detected bit ขึ้นหลัง Soft Reset */
-    CHK_CLEAR_STATUS = 1u << 4, /**< Clear Status ลบ bit ได้จริง */
-    CHK_SERIAL       = 1u << 5, /**< Serial Number อ่านได้และไม่ใช่ 0x00000000 / 0xFFFFFFFF */
-    CHK_HEATER       = 1u << 6, /**< Heater bit 13 ตอบสนองคำสั่งเปิด/ปิด */
+    CHK_CLEAR_STATUS = 1u << 3, /**< Clear Status ลบ bit ที่ค้างได้จริง */
+    CHK_SERIAL       = 1u << 4, /**< Serial Number อ่านได้และไม่ใช่ 0x00000000 / 0xFFFFFFFF */
+    CHK_HEATER       = 1u << 5, /**< Heater bit 13 ตอบสนองคำสั่งเปิด/ปิด */
+    CHK_ALERT_RW     = 1u << 6, /**< เขียน Alert threshold แล้วอ่านกลับได้ค่าเดิม */
     CHK_MEAS_CRC     = 1u << 7, /**< ผลวัด CRC ถูก */
-    CHK_MEAS_RANGE   = 1u << 8, /**< ผลวัดอยู่ในช่วง Physical range */
-    CHK_CMD_ERROR    = 1u << 9  /**< Command ที่ไม่มีในตารางทำให้ Command-failed bit ขึ้น */
+    CHK_MEAS_RANGE   = 1u << 8  /**< ผลวัดอยู่ในช่วง Physical range */
   };
-  static const uint8_t VERIFY_CHECK_COUNT = 10;
+  static const uint8_t VERIFY_CHECK_COUNT = 9;
 
   /* ======================================================================= */
   /* Constructor & begin                                                     */
@@ -157,6 +162,9 @@ public:
   /**
    * @brief  เริ่มต้นเซ็นเซอร์: Break -> Soft Reset -> ตรวจ Status Register
    *         ต้องเรียก Wire.begin() ใน Sketch ก่อนเสมอ
+   *
+   *         ถ้าไม่พบชิปในครั้งแรก จะเรียก recoverBus() หนึ่งครั้งแล้วลองใหม่
+   *         เพื่อกู้ Bus ที่ค้างมาจากการรันครั้งก่อน (ดูคำอธิบายที่ recoverBus())
    * @param  address   0x44 (ค่าเริ่มต้น) หรือ 0x45 (Jumper ADDR ปิด)
    * @param  alertPin  GPIO ที่ต่อขา ALRT หรือ -1 ถ้าไม่ต่อ
    * @param  resetPin  GPIO ที่ต่อขา RST หรือ -1 ถ้าไม่ต่อ
@@ -305,10 +313,35 @@ public:
   /* Reset                                                                   */
   /* ======================================================================= */
 
+  /**
+   * @brief  Soft Reset (Command 0x30A2) คืนค่า Register ทั้งหมดสู่ default
+   * @note   วัดบนบอร์ดจริงแล้ว: Heater ถูกปิดจริงหลังคำสั่งนี้ แต่ชิป
+   *         **ไม่ตั้ง** Reset-detected bit (bit 4) จึงห้ามใช้ bit นั้นยืนยันว่า Reset สำเร็จ
+   *         ถ้าต้องการให้ bit 4 ขึ้น ให้ใช้ generalCallReset() หรือ hardReset()
+   */
   bool softReset();
+
+  /**
+   * @brief  General Call Reset (เขียน 0x06 ไปที่ address 0x00) รีเซ็ตทุกอุปกรณ์บน Bus
+   * @warning กระทบอุปกรณ์อื่นบน Bus เดียวกันทั้งหมด ใช้เมื่อจำเป็นเท่านั้น
+   */
   bool generalCallReset();
+
   /** @brief กระตุกขา nRESET (ต้องส่ง resetPin ใน begin()) */
   bool hardReset();
+
+  /**
+   * @brief  กู้ I2C Bus ที่ค้าง แล้วคืน true เมื่อชิปกลับมาตอบ ACK
+   *
+   *         ใช้เมื่อ lastError() เป็น BUS_ERROR ติดกันหลายครั้ง  บนฮาร์ดแวร์จริงพบว่า
+   *         เมื่อชิป NACK (เช่นได้รับ Command ที่ไม่รู้จัก หรือ Write ที่ CRC ผิด)
+   *         i2c driver ของ Arduino-ESP32 Core 3.x จะคืน ESP_ERR_INVALID_STATE
+   *         กับทุก Transaction ถัดไปอย่างถาวร และ `Wire.end()` + `Wire.begin()` ก็ไม่ช่วย
+   *         การส่ง General Call Reset กู้กลับมาได้ทุกครั้ง
+   *
+   * @warning ใช้ General Call จึงรีเซ็ตอุปกรณ์อื่นบน Bus เดียวกันด้วย
+   */
+  bool recoverBus();
 
   /* ======================================================================= */
   /* Chip Identity Verification (ตรวจของแท้)                                 */
@@ -329,8 +362,9 @@ public:
   uint32_t getSerialNumber();
 
   /**
-   * @brief  Heuristic ตรวจของแท้ 10 ข้อ (ID + Serial + Heater + CRC + Command-failed behaviour)
-   *         ใช้เวลาประมาณ 60 ms และจะคืน Mode เดิมให้หลังตรวจเสร็จ
+   * @brief  Heuristic ตรวจของแท้ 9 ข้อ (Status Register + Serial + Heater + Alert R/W + CRC + Range)
+   *         ใช้เวลาประมาณ 80 ms คืน Mode เดิมและคืนค่า Alert threshold เดิมให้หลังตรวจเสร็จ
+   *         ทุกข้อปลอดภัยกับ Bus ไม่มีข้อไหนจงใจให้ชิป NACK
    * @return true เมื่อผ่านครบทุกข้อ (Genuine::PASS)
    */
   bool isGenuine();

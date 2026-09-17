@@ -1,0 +1,1 @@
+5f8d752fb48b9534c7e3b25ffa1df328c445c2b7eade1380b8865c4a96e649f6  Massmore_SHT3x_FactoryTest_ESP32.bin

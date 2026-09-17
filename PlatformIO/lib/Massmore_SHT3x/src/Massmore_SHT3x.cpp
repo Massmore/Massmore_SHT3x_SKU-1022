@@ -10,8 +10,9 @@
 
 #include <math.h>
 
-/* Command ที่ไม่มีในตาราง Datasheet ใช้ทดสอบว่าชิปตั้ง Command-failed bit จริง */
-#define MASSMORE_SHT3X_CMD_BOGUS 0x3999
+/* ค่าทดสอบสำหรับ Alert threshold register ใน isGenuine()
+   เลือกค่าที่ตรงกับรูปแบบ pack แล้ว (RH 7 bit บน | T 9 bit บน) จึงอ่านกลับได้ตรงกันพอดี */
+#define MASSMORE_SHT3X_ALERT_PROBE 0x7E1A
 
 /* ค่าคงที่สูตร Magnus (dewPoint / absoluteHumidity) */
 #define MASSMORE_SHT3X_MAGNUS_A 17.62f
@@ -53,7 +54,10 @@ bool Massmore_SHT3x::begin(uint8_t address, int8_t alertPin, int8_t resetPin) {
   }
 
   if (!isConnected()) {
-    return false;
+    /* Bus อาจค้างมาจากการรันครั้งก่อน (MCU reset ไม่ได้ตัดไฟเซ็นเซอร์) ลองกู้หนึ่งครั้ง */
+    if (!recoverBus()) {
+      return setError(ErrorCode::NOT_FOUND);
+    }
   }
 
   _begun = true;
@@ -621,6 +625,8 @@ bool Massmore_SHT3x::isAlertPinActive() const {
 /* ========================================================================= */
 
 bool Massmore_SHT3x::softReset() {
+  /* วัดบนบอร์ดจริง: Heater ถูกปิดจริงหลังคำสั่งนี้ (Register กลับ default)
+     แต่ชิปไม่ตั้ง Reset-detected bit จึงไม่ยืนยันผลผ่าน Status Register */
   if (!sendCommand(MASSMORE_SHT3X_CMD_SOFT_RESET)) {
     return false;
   }
@@ -639,6 +645,24 @@ bool Massmore_SHT3x::generalCallReset() {
   delay(MASSMORE_SHT3X_SOFT_RESET_MS);
   if (_begun) _mode = Mode::SINGLE_SHOT;
   _fsmState = FsmState::IDLE;
+  return true;
+}
+
+bool Massmore_SHT3x::recoverBus() {
+  /* ส่ง General Call Reset ไปที่ address 0x00 ซึ่งเป็น device handle คนละตัวกับ 0x44
+     จึงผ่านแม้ handle ของเซ็นเซอร์จะค้างอยู่ จากนั้นชิปกลับสู่สถานะ default */
+  _wire->beginTransmission(MASSMORE_SHT3X_GENERAL_CALL_ADDR);
+  _wire->write((uint8_t)MASSMORE_SHT3X_GENERAL_CALL_RESET_BYTE);
+  _wire->endTransmission();
+  delay(MASSMORE_SHT3X_POWER_UP_MS + MASSMORE_SHT3X_SOFT_RESET_MS);
+
+  _mode = _begun ? Mode::SINGLE_SHOT : Mode::IDLE;
+  _fsmState = FsmState::IDLE;
+
+  if (!isConnected()) {
+    return false;
+  }
+  clearError();
   return true;
 }
 
@@ -692,14 +716,14 @@ bool Massmore_SHT3x::isGenuine() {
   _verifyMask = 0;
   _genuine = Genuine::UNKNOWN;
 
-  /* 1. ACK */
+  /* 1. ACK ที่ address */
   if (!isConnected()) {
     _genuine = Genuine::NOT_SHT3X;
     return false;
   }
   _verifyMask |= CHK_ACK;
 
-  /* จำ Mode เดิมไว้เพื่อคืนสภาพหลังตรวจ */
+  /* จำสถานะเดิมไว้เพื่อคืนให้หลังตรวจเสร็จ */
   Mode savedMode = _mode;
   Rate savedRate = _rate;
   bool wasBegun = _begun;
@@ -708,25 +732,30 @@ bool Massmore_SHT3x::isGenuine() {
   sendCommand(MASSMORE_SHT3X_CMD_BREAK);
   delay(MASSMORE_SHT3X_CMD_GAP_MS);
 
-  /* 2-4. Soft Reset แล้วดู Status Register */
+  /* 2-3. Status Register: CRC ถูก และ Reserved bit เป็น 0
+     หมายเหตุจากฮาร์ดแวร์จริง: Soft Reset ของชิปนี้ไม่ตั้ง Reset-detected bit
+     จึงไม่ใช้ bit นั้นเป็นเกณฑ์ตรวจ */
   softReset();
   uint16_t status = 0;
   if (readStatus(status)) {
     _verifyMask |= CHK_STATUS_CRC;
     if ((status & MASSMORE_SHT3X_STATUS_RESERVED_MASK) == 0) _verifyMask |= CHK_STATUS_RSVD;
-    if (status & MASSMORE_SHT3X_STATUS_RESET_DETECTED) _verifyMask |= CHK_RESET_FLAG;
   }
 
-  /* 5. Clear Status ต้องลบ Reset bit ได้ */
+  /* 4. Clear Status ต้องลบ bit ที่ค้างได้จริง (ชิปปลอมมักคืนค่าคงที่) */
   if (clearStatus() && readStatus(status)) {
-    if ((status & MASSMORE_SHT3X_STATUS_RESET_DETECTED) == 0) _verifyMask |= CHK_CLEAR_STATUS;
+    if ((status & (MASSMORE_SHT3X_STATUS_ALERT_PENDING |
+                   MASSMORE_SHT3X_STATUS_RESET_DETECTED |
+                   MASSMORE_SHT3X_STATUS_CMD_FAILED)) == 0) {
+      _verifyMask |= CHK_CLEAR_STATUS;
+    }
   }
 
-  /* 6. Serial Number */
+  /* 5. Serial Number */
   uint32_t serial = getSerialNumber();
   if (serial != 0x00000000UL && serial != 0xFFFFFFFFUL) _verifyMask |= CHK_SERIAL;
 
-  /* 7. Heater bit 13 ต้องตามคำสั่ง */
+  /* 6. Heater bit 13 ต้องตามคำสั่งเปิด/ปิด */
   bool heaterOk = false;
   if (setHeater(true) && readStatus(status)) {
     heaterOk = (status & MASSMORE_SHT3X_STATUS_HEATER_ON) != 0;
@@ -738,7 +767,21 @@ bool Massmore_SHT3x::isGenuine() {
   }
   if (heaterOk) _verifyMask |= CHK_HEATER;
 
-  /* 8-9. วัดจริง 1 ครั้ง: CRC และ Physical range */
+  /* 7. Alert threshold register: เขียนแล้วอ่านกลับต้องได้ค่าเดิม
+     เป็น Register write จริงที่ชิปเลียนแบบมักทำไม่ได้ และปลอดภัยกับ Bus (ไม่มี NACK) */
+  uint16_t savedLimit = 0;
+  if (readWord(MASSMORE_SHT3X_CMD_READ_ALERT_HIGH_SET, savedLimit)) {
+    uint16_t readback = 0;
+    if (writeWord(MASSMORE_SHT3X_CMD_WRITE_ALERT_HIGH_SET, MASSMORE_SHT3X_ALERT_PROBE) &&
+        readWord(MASSMORE_SHT3X_CMD_READ_ALERT_HIGH_SET, readback) &&
+        readback == MASSMORE_SHT3X_ALERT_PROBE) {
+      _verifyMask |= CHK_ALERT_RW;
+    }
+    /* คืนค่าเดิมให้ผู้ใช้เสมอ */
+    writeWord(MASSMORE_SHT3X_CMD_WRITE_ALERT_HIGH_SET, savedLimit);
+  }
+
+  /* 8-9. วัดจริงหนึ่งครั้ง: CRC ถูก และค่าอยู่ใน Physical range */
   _mode = Mode::SINGLE_SHOT;
   if (measureBlocking()) {
     _verifyMask |= CHK_MEAS_CRC;
@@ -752,13 +795,6 @@ bool Massmore_SHT3x::isGenuine() {
     }
   }
 
-  /* 10. Command ที่ไม่มีในตารางต้องทำให้ Command-failed bit ขึ้น */
-  clearStatus();
-  sendCommand(MASSMORE_SHT3X_CMD_BOGUS);
-  delay(MASSMORE_SHT3X_CMD_GAP_MS);
-  if (readStatus(status) && (status & MASSMORE_SHT3X_STATUS_CMD_FAILED)) {
-    _verifyMask |= CHK_CMD_ERROR;
-  }
   clearStatus();
 
   /* คืนสภาพเดิม */
@@ -777,7 +813,7 @@ bool Massmore_SHT3x::isGenuine() {
     _genuine = Genuine::NOT_SHT3X;
   } else if (passed == VERIFY_CHECK_COUNT) {
     _genuine = Genuine::PASS;
-  } else if (passed >= 8) {
+  } else if (passed >= VERIFY_CHECK_COUNT - 1) {
     _genuine = Genuine::PARTIAL;
   } else {
     _genuine = Genuine::SUSPECT;
@@ -798,13 +834,12 @@ const char *Massmore_SHT3x::getVerifyCheckName(uint8_t index) {
   case 0: return "ACK";
   case 1: return "STATUS_CRC";
   case 2: return "STATUS_RESERVED_ZERO";
-  case 3: return "RESET_FLAG";
-  case 4: return "CLEAR_STATUS";
-  case 5: return "SERIAL_NUMBER";
-  case 6: return "HEATER_BIT";
+  case 3: return "CLEAR_STATUS";
+  case 4: return "SERIAL_NUMBER";
+  case 5: return "HEATER_BIT";
+  case 6: return "ALERT_REGISTER_RW";
   case 7: return "MEAS_CRC";
   case 8: return "MEAS_RANGE";
-  case 9: return "CMD_FAILED_FLAG";
   default: return "UNKNOWN";
   }
 }

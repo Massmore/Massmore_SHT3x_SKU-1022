@@ -1,17 +1,21 @@
 /*
-  04_Alert_Heater - Periodic Mode + ALERT threshold ผ่านขา ALRT + Heater + Status Register
+  04_Alert_Heater - Periodic Mode + ALERT threshold + Heater + Status Register
 
   ALERT
     SHT3x เก็บ threshold 4 ชุดแบบมี Hysteresis (lowSet < lowClear < highClear < highSet)
     ทำงานเฉพาะ Periodic Mode เพราะชิปต้องวัดเองถึงจะเปรียบเทียบได้
     ขา ALRT เป็น Push-pull ไม่ต้องใส่ Pull-up   ความละเอียดที่ชิปเก็บ ~0.5 °C และ ~1 %RH
 
+  ตัวอย่างนี้ตรวจเองว่าขา ALRT ต่ออยู่จริงหรือไม่ (เทียบ GPIO กับ Alert bit ใน Status Register)
+    ต่ออยู่     -> ใช้ Interrupt รับการแจ้งเตือน
+    ไม่ได้ต่อ   -> อ่าน Alert bit จาก Status Register แทน ใช้งานได้เหมือนกัน
+
   Heater
-    ใช้ไล่ความชื้นที่เกาะเซ็นเซอร์ (Outdoor) หรือทดสอบว่าเซ็นเซอร์ตอบสนอง
-    เปิดแล้วอุณหภูมิที่อ่านได้จะสูงขึ้นชั่วคราว  ห้ามใช้ค่าขณะ Heater เปิดเป็นค่าจริง
+    ใช้ไล่ความชื้นที่เกาะเซ็นเซอร์ (รุ่น Outdoor) หรือทดสอบว่าเซ็นเซอร์ตอบสนอง
+    เปิดแล้วอุณหภูมิที่อ่านได้จะสูงขึ้นชั่วคราว ห้ามใช้ค่าขณะ Heater เปิดเป็นค่าจริง
 
   การต่อสาย
-    ESP32: SDA -> 21, SCL -> 22, ALRT -> GPIO 4
+    ESP32: SDA -> 21, SCL -> 22, ALRT -> GPIO 4 (ไม่ต่อก็รันได้)
     Nano : SDA -> A4, SCL -> A5, ALRT -> D2 (External interrupt)
 
   Copyright (c) 2026 Massmore Biz Co., Ltd.  |  MIT License
@@ -36,6 +40,8 @@
 Massmore_SHT3x sht(Wire);
 
 volatile bool alertFlag = false;
+bool alertPinWired = false;
+bool lastAlertState = false;
 uint32_t lastHeaterDemoMs = 0;
 
 /* ISR ต้องสั้นที่สุด ห้ามคุย I2C หรือ Serial ในนี้ */
@@ -44,7 +50,8 @@ void ISR_ATTR onAlertPin() { alertFlag = true; }
 void printLimits() {
   Massmore_SHT3x::AlertLimits l;
   if (!sht.getAlertLimits(l)) {
-    Serial.println(F("getAlertLimits failed"));
+    Serial.print(F("getAlertLimits failed: "));
+    Serial.println(sht.lastErrorString());
     return;
   }
   Serial.println(F("Alert limits stored in chip (rounded by hardware):"));
@@ -58,22 +65,45 @@ void printLimits() {
   Serial.print(F("  RH="));          Serial.println(l.lowSetHumidity, 1);
 }
 
+/* ตั้ง threshold ให้ Alert ทำงานแน่นอน แล้วดูว่าขา GPIO ขยับตามหรือไม่ */
+void detectAlertPin() {
+  Serial.println(F("Checking whether the ALRT pin is wired..."));
+  sht.setAlertWindow(-30.0f, -20.0f, 5.0f, 10.0f, 1.0f, 3.0f); /* อุณหภูมิห้องจะเกิน highSet แน่นอน */
+  sht.startPeriodic(Massmore_SHT3x::Rate::HZ_2);
+  delay(1200);
+
+  Massmore_SHT3x::StatusBits s;
+  if (sht.readStatus(s) && s.alertPending) {
+    alertPinWired = sht.isAlertPinActive();
+    Serial.print(F("  chip alert bit = 1, ALRT pin = "));
+    Serial.println(alertPinWired ? F("HIGH -> pin is wired, using interrupt")
+                                 : F("LOW -> pin not wired, using status polling"));
+  } else {
+    Serial.println(F("  could not force an alert, falling back to status polling"));
+  }
+  sht.stopPeriodic();
+  sht.clearStatus();
+}
+
 void heaterDemo() {
   Serial.println(F("--- Heater demo: ON for 3 s ---"));
   float before = sht.getLastReading().temperature;
-  sht.setHeater(true);
-  Serial.print(F("Heater bit: "));
+  if (!sht.setHeater(true)) {
+    Serial.print(F("heater on failed: "));
+    Serial.println(sht.lastErrorString());
+    return;
+  }
+  Serial.print(F("Heater status bit: "));
   Serial.println(sht.isHeaterOn() ? F("ON") : F("OFF"));
 
   uint32_t t0 = millis();
   float peak = before;
   while ((uint32_t)(millis() - t0) < HEATER_ON_MS) {
-    Massmore_SHT3x::Reading r;
-    if (sht.update() || sht.fetchData(r)) {
+    if (sht.update()) {
       float t = sht.getLastReading().temperature;
       if (t > peak) peak = t;
     }
-    delay(100);
+    delay(50);
   }
   sht.setHeater(false);
   Serial.print(F("Temperature rise: +"));
@@ -103,9 +133,12 @@ void setup() {
     }
   }
 
-  attachInterrupt(digitalPinToInterrupt(PIN_ALERT), onAlertPin, CHANGE);
+  detectAlertPin();
+  if (alertPinWired) {
+    attachInterrupt(digitalPinToInterrupt(PIN_ALERT), onAlertPin, CHANGE);
+  }
 
-  /* หน้าต่างที่ยอมรับ: 20-30 °C, 40-70 %RH   Hysteresis 1 °C / 3 %RH กัน ALRT กระพริบที่ขอบ */
+  /* หน้าต่างใช้งานจริง: 20-30 °C, 40-70 %RH  Hysteresis 1 °C / 3 %RH กัน ALRT กระพริบที่ขอบ */
   if (!sht.setAlertWindow(20.0f, 30.0f, 40.0f, 70.0f, 1.0f, 3.0f)) {
     Serial.print(F("setAlertWindow failed: "));
     Serial.println(sht.lastErrorString());
@@ -122,21 +155,32 @@ void loop() {
     alertFlag = false;
     Serial.print(F(">>> ALRT pin = "));
     Serial.println(sht.isAlertPinActive() ? F("HIGH (alert)") : F("LOW (normal)"));
-
-    Massmore_SHT3x::StatusBits s;
-    if (sht.readStatus(s)) {
-      if (s.temperatureAlert) Serial.println(F("    cause: temperature out of window"));
-      if (s.humidityAlert)    Serial.println(F("    cause: humidity out of window"));
-    }
   }
 
   if (sht.update()) {
     const Massmore_SHT3x::Reading &r = sht.getLastReading();
+
+    Massmore_SHT3x::StatusBits s;
+    bool statusOk = sht.readStatus(s);
+
     Serial.print(r.temperature, 2);
     Serial.print(F(" C  "));
     Serial.print(r.humidity, 2);
-    Serial.print(F(" %RH  ALRT="));
-    Serial.println(sht.isAlertPinActive() ? F("HIGH") : F("LOW"));
+    Serial.print(F(" %RH  alert="));
+    Serial.print(statusOk && s.alertPending ? F("YES") : F("no "));
+    if (alertPinWired) {
+      Serial.print(F("  ALRT="));
+      Serial.print(sht.isAlertPinActive() ? F("HIGH") : F("LOW"));
+    }
+    Serial.println();
+
+    /* รายงานสาเหตุเฉพาะตอนสถานะเปลี่ยน เพื่อไม่ให้ log ยาวเกินไป */
+    if (statusOk && s.alertPending != lastAlertState) {
+      lastAlertState = s.alertPending;
+      if (s.temperatureAlert) Serial.println(F("    cause: temperature out of window"));
+      if (s.humidityAlert)    Serial.println(F("    cause: humidity out of window"));
+      if (!s.alertPending)    Serial.println(F("    back inside the window"));
+    }
   }
 
   if ((uint32_t)(millis() - lastHeaterDemoMs) >= HEATER_DEMO_INTERVAL_MS) {

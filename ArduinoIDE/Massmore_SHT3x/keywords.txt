@@ -58,6 +58,7 @@ isAlertPinActive	KEYWORD2
 softReset	KEYWORD2
 generalCallReset	KEYWORD2
 hardReset	KEYWORD2
+recoverBus	KEYWORD2
 verifyChipID	KEYWORD2
 getSerialNumber	KEYWORD2
 isGenuine	KEYWORD2

@@ -29,8 +29,9 @@ Sensirion SHT30 · SHT31 · SHT35 — รุ่นปกติ (`-B`) และ�
 7. [API Reference](#api-reference)
 8. [Examples](#examples)
 9. [Factory Test & Web Serial Monitor](#factory-test--web-serial-monitor)
-10. [Where to Buy](#where-to-buy)
-11. [License](#license)
+10. [ข้อควรรู้จากการทดสอบบนฮาร์ดแวร์จริง](#ข้อควรรู้จากการทดสอบบนฮาร์ดแวร์จริง)
+11. [Where to Buy](#where-to-buy)
+12. [License](#license)
 
 ---
 
@@ -117,7 +118,9 @@ code Massmore_SHT3x_SKU-1022/PlatformIO
 ```
 
 `platformio.ini` เตรียม environment ไว้ 3 ตัว: `esp32dev` (default) · `esp32-s3-devkitc-1` · `nano`
-ESP32 ใช้ **pioarduino** platform เพื่อให้ได้ Arduino-ESP32 Core 3.x (platform `espressif32` เดิมยังติดอยู่ที่ Core 2.x)
+ESP32 ใช้ **pioarduino** platform pin ไว้ที่ `55.03.311` (= Arduino-ESP32 Core 3.3.11)
+ซึ่งเป็นเวอร์ชันที่ทดสอบผ่านบนฮาร์ดแวร์จริงแล้ว
+(platform `espressif32` ตัวทางการยังติดอยู่ที่ Core 2.x จึงใช้ไม่ได้)
 
 ```bash
 pio run -e esp32dev -t upload -t monitor
@@ -232,6 +235,7 @@ Massmore_SHT3x sht(Wire);
 | `setAlertLimits(AlertLimits)` / `getAlertLimits(AlertLimits &)` | ตั้ง/อ่าน threshold ครบ 4 ชุด | `bool` |
 | `isAlertPinActive()` | ขา ALRT เป็น HIGH หรือไม่ | `bool` |
 | `softReset()` / `generalCallReset()` / `hardReset()` | Reset 3 แบบ (`hardReset` ต้องส่ง `resetPin` ใน `begin()`) | `bool` |
+| `recoverBus()` | กู้ I2C Bus ที่ค้าง ดู [ข้อควรรู้](#ข้อควรรู้จากการทดสอบบนฮาร์ดแวร์จริง) | `bool` |
 
 ### Chip Identity (ตรวจของแท้)
 
@@ -239,7 +243,7 @@ Massmore_SHT3x sht(Wire);
 |---|---|---|
 | `verifyChipID()` | SHT3x ไม่มี CHIP_ID — ตรวจ Reserved bit ของ Status Register แทน | `bool` |
 | `getSerialNumber()` | Serial Number 32-bit จากโรงงาน (Command `0x3780`) | `uint32_t` (0 = fail) |
-| `isGenuine()` | Heuristic 10 ข้อ: Status / Serial / Heater / CRC / Command-failed behaviour | `bool` |
+| `isGenuine()` | Heuristic 9 ข้อ: Status / Clear / Serial / Heater / Alert R/W / CRC / Range | `bool` |
 | `getGenuineVerdict()` / `getVerifyMask()` | ผลละเอียด `GENUINE` / `PARTIAL` / `SUSPECT` / `NOT_SHT3X` | `Genuine` / `uint16_t` |
 
 ### Error & utility
@@ -264,6 +268,7 @@ Massmore_SHT3x sht(Wire);
 | 05 | [`05_Factory_Test`](ArduinoIDE/Massmore_SHT3x/examples/05_Factory_Test) | **Outgoing QA/QC** พิมพ์ `#RESULT` / `#VERDICT` ให้ Web Serial Monitor อ่าน |
 
 ทุก example คอมไพล์ผ่านบน `esp32dev` · `esp32-s3-devkitc-1` · `nano` แบบ 0 error / 0 warning จากโค้ดไลบรารี
+และ **ทดสอบรันจริงครบทุกตัวบน ESP32-WROOM + Massmore SHT3X (SHT30)** แล้ว
 
 ---
 
@@ -276,18 +281,57 @@ Massmore_SHT3x sht(Wire);
 #MASSMORE_FACTORY_TEST v1.0
 #PRODUCT Massmore_SHT3x
 #MCU ESP32
+#RESULT BUS_RECOVER PASS READY
 #RESULT BUS_SCAN PASS 0x44
 #RESULT CHIP_ID PASS 0x8010
-#RESULT SERIAL PASS 0x........
+#RESULT SERIAL PASS 0x2A124EE2
 #RESULT AUTHENTICITY PASS GENUINE
-#RESULT RANGE_TEMP PASS 26.4
-#RESULT RANGE_HUMI PASS 61.2
+#RESULT RANGE_TEMP PASS 26.6
+#RESULT RANGE_HUMI PASS 57.0
 #RESULT CONTINUOUS PASS 20/20
 #VERDICT PASS
 [PASS] SENSOR QA PASSED - READY TO SHIP
 ```
 
 ไฟล์ `.bin` พร้อมแฟลชและคู่มือ: [`firmware/README.md`](firmware/README.md)
+
+---
+
+## ข้อควรรู้จากการทดสอบบนฮาร์ดแวร์จริง
+
+ไลบรารีนี้ทดสอบบน ESP32-WROOM + Massmore SHT3X (SHT30) จริง ไม่ได้อ่านจาก Datasheet อย่างเดียว
+สามเรื่องด้านล่างคือพฤติกรรมที่ Datasheet ไม่ได้บอก และมีผลกับโค้ดของผู้ใช้โดยตรง
+
+### 1. NACK หนึ่งครั้งทำให้ I2C ของ ESP32 Core 3.x ค้างถาวร
+
+เมื่อชิปตอบ NACK เช่นได้รับ Command ที่ไม่รู้จัก หรือ Write ที่ CRC ผิด
+driver ของ Arduino-ESP32 Core 3.x จะคืน `ESP_ERR_INVALID_STATE` กับ **ทุก** Transaction ถัดไป
+และไม่ฟื้นเอง แม้เรียก `Wire.end()` แล้ว `Wire.begin()` ใหม่ หรือกดปุ่ม reset ที่ MCU
+(เพราะ MCU reset ไม่ได้ตัดไฟเลี้ยงเซ็นเซอร์)
+
+วิธีกู้ที่ได้ผลคือส่ง General Call Reset ซึ่งไลบรารีห่อไว้ให้แล้ว
+
+```cpp
+if (sht.lastError() == Massmore_SHT3x::ErrorCode::BUS_ERROR) {
+  sht.recoverBus();     // ส่ง General Call Reset แล้วตรวจว่าชิปกลับมาตอบ
+}
+```
+
+`begin()` เรียกให้อัตโนมัติหนึ่งครั้งเมื่อไม่พบชิปในครั้งแรก จึงกู้จากการรันครั้งก่อนได้เอง
+ข้อควรระวัง: General Call รีเซ็ตอุปกรณ์ I2C ตัวอื่นบน Bus เดียวกันด้วย
+
+### 2. Soft Reset ไม่ตั้ง Reset-detected bit
+
+`softReset()` ทำงานจริง (ยืนยันแล้วว่า Heater ถูกปิดและ Register กลับเป็นค่า default)
+แต่ชิปไม่ตั้ง bit 4 ของ Status Register หลังคำสั่งนี้ ตั้งเฉพาะตอน power-up และ General Call Reset
+จึง **ห้ามใช้ bit 4 ยืนยันว่า Soft Reset สำเร็จ** ไลบรารีและ Factory Test ไม่ใช้เกณฑ์นี้แล้ว
+
+### 3. Reserved bit 6 และ 5 ไม่ได้เป็น 0 เสมอ
+
+Datasheet ระบุ bit 9…5 เป็น reserved ที่ต้องอ่านได้ 0 แต่ขณะอยู่ใน Periodic Mode
+บอร์ดจริงอ่าน Status ได้ `0x8C60` ซึ่ง bit 6 และ 5 เป็น 1
+ไลบรารีจึงใช้ mask `0x538C` (ตัดสอง bit นี้ออก) ไม่เช่นนั้น `verifyChipID()` จะคืน `WRONG_ID`
+ทั้งที่ชิปทำงานปกติ
 
 ---
 

@@ -7,10 +7,11 @@
   บรรทัดที่ขึ้นต้นด้วย # คือบรรทัดที่เครื่อง parse  บรรทัดอื่นอ่านโดยคน
 
   Test sequence (Massmore Standard §7.1)
+    0. BUS_RECOVER   กู้ I2C Bus ที่อาจค้างจากการรันครั้งก่อน (MCU reset ไม่ตัดไฟเซ็นเซอร์)
     1. BUS_SCAN      หา SHT3x ที่ 0x44 / 0x45
-    2. CHIP_ID       Status Register หลัง Soft Reset (Reserved bit = 0, Reset flag = 1)
+    2. CHIP_ID       Status Register: CRC ถูก + Reserved bit = 0 + Clear Status ทำงาน
     3. SERIAL        Serial Number 32-bit (Command 0x3780)
-    4. AUTHENTICITY  Heuristic 10 ข้อ -> GENUINE / SUSPECT
+    4. AUTHENTICITY  Heuristic 9 ข้อ -> GENUINE / PARTIAL / SUSPECT
     5. RANGE_TEMP / RANGE_HUMI  ค่าอยู่ใน Physical range ของ Datasheet
     6. CONTINUOUS    20 samples ไม่มี NAN / TIMEOUT และ Noise สมเหตุสมผล
     7. VERDICT
@@ -109,11 +110,22 @@ static bool testBusScan(uint8_t &addressOut) {
 }
 
 static bool testChipId() {
-  /* SHT3x ไม่มี CHIP_ID register: ใช้ Status Register หลัง Soft Reset แทน */
+  /* SHT3x ไม่มี CHIP_ID register จึงยืนยันตัวตนผ่านพฤติกรรมของ Status Register:
+     อ่านได้ CRC ถูก + Reserved bit เป็น 0 + Clear Status ลบ bit ที่ค้างได้จริง
+     ไม่ใช้ Reset-detected bit เป็นเกณฑ์ เพราะวัดบนบอร์ดจริงแล้วพบว่า Soft Reset
+     ของชิปนี้ไม่ตั้ง bit ดังกล่าว (ตั้งเฉพาะ power-up และ General Call Reset) */
   uint16_t status = 0;
-  bool pass = sht.softReset() && sht.readStatus(status) &&
-              (status & MASSMORE_SHT3X_STATUS_RESERVED_MASK) == 0 &&
-              (status & MASSMORE_SHT3X_STATUS_RESET_DETECTED) != 0;
+  bool readOk = sht.softReset() && sht.readStatus(status);
+  bool reservedOk = readOk && (status & MASSMORE_SHT3X_STATUS_RESERVED_MASK) == 0;
+  bool clearOk = false;
+  if (reservedOk && sht.clearStatus()) {
+    uint16_t after = 0xFFFF;
+    clearOk = sht.readStatus(after) &&
+              (after & (MASSMORE_SHT3X_STATUS_ALERT_PENDING |
+                        MASSMORE_SHT3X_STATUS_RESET_DETECTED |
+                        MASSMORE_SHT3X_STATUS_CMD_FAILED)) == 0;
+  }
+  bool pass = readOk && reservedOk && clearOk;
   resultLine(F("CHIP_ID"), pass);
   printHex(status, 4);
   Serial.println();
@@ -134,7 +146,7 @@ static bool testSerial() {
 static bool testAuthenticity() {
   bool pass = sht.isGenuine();
   Massmore_SHT3x::Genuine v = sht.getGenuineVerdict();
-  /* PARTIAL (>= 8/10) ยอมรับได้ในสายยาว แต่ FAIL เมื่อ SUSPECT / NOT_SHT3X */
+  /* PARTIAL (ผ่าน 8 จาก 9) ยอมรับได้ในสายยาว แต่ FAIL เมื่อ SUSPECT / NOT_SHT3X */
   bool accept = pass || v == Massmore_SHT3x::Genuine::PARTIAL;
   resultLine(F("AUTHENTICITY"), accept);
   Serial.println(Massmore_SHT3x::genuineToString(v));
@@ -212,6 +224,12 @@ static void runFactoryTest() {
   Serial.println(F(MCU_NAME));
   Serial.print(F("#LIB "));
   Serial.println(Massmore_SHT3x::getLibraryVersion());
+
+  /* กู้ Bus ก่อนเสมอ: การรันครั้งก่อนอาจทิ้ง i2c driver ไว้ในสถานะค้าง
+     และ MCU reset ไม่ได้ตัดไฟเลี้ยงเซ็นเซอร์ */
+  bool recovered = sht.recoverBus();
+  Serial.print(F("#RESULT BUS_RECOVER "));
+  Serial.println(recovered ? F("PASS READY") : F("PASS NO_DEVICE_YET"));
 
   uint8_t address = MASSMORE_SHT3X_I2C_ADDR_A;
   bool ok = testBusScan(address);
